@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Any
 import logging
 from collections import defaultdict
@@ -13,7 +13,7 @@ ChunkId = int
 
 @dataclass
 class Logs:
-    access_frequencies: Dict[ChunkId, int]
+    access_frequencies: Dict[ChunkId, int] = field(default_factory=lambda: defaultdict(int))
 
 @dataclass
 class Assignment:
@@ -27,13 +27,46 @@ class Assignment:
             for chunk in chunks:
                 self.chunks[chunk].append(worker)
 
-# Doesn't use logs for now. Simply distributes chunks evenly between workers
+def distribute_chunks(
+    chunks: List[ChunkId],
+    weights: List[int],
+    average: float,
+    lower: int,
+    upper: int,
+) -> Dict[ChunkId, int]:
+    assert len(chunks) == len(weights)
+
+    if average <= lower:
+        return {id: lower for id in chunks}
+    if average >= upper:
+        return {id: upper for id in chunks}
+    if sum(weights) == 0:
+        return {id: round(average) for id in chunks}
+
+    base = len(chunks) * lower
+    redundance = average * len(chunks) - base
+    k = redundance / sum(weights)
+    distribution = {id: lower + round(weights[i] * k) for i, id in enumerate(chunks)}
+    maximum = max(distribution.values())
+
+    logging.debug("Distributing chunks across workers. Maximum replication: %d", maximum)
+    if maximum > upper:
+        logging.warn("Couldn't distribute chunks fairly")
+        return {id: min(replicas, upper) for id, replicas in distribution.items()}
+    return distribution
+
 def assign(
     workers: List[WorkerId],
     chunks: List[ChunkId],
-    logs: Logs = Logs(access_frequencies={}),
+    logs: Logs = Logs(),
     strategy: Literal["rendezvous", "circle"] = "rendezvous",
+    replication_factor: float = 3, # how many workers should download a chunk on average
 ):
+    chunks_replicas = distribute_chunks(
+        chunks, weights=[logs.access_frequencies.get(id, 0) for id in chunks],
+        lower=1, upper=len(workers), average=replication_factor,
+    )
+
     assigned_chunks = defaultdict(list)
 
     def get_hash(s: Any):
@@ -43,9 +76,10 @@ def assign(
     if strategy == "rendezvous":
         # https://en.wikipedia.org/wiki/Rendezvous_hashing
         for chunk in chunks:
-            hashes = [get_hash(f"{chunk}:{worker}") for worker in workers]
-            chosen_worker = workers[argmin(hashes)]
-            assigned_chunks[chosen_worker].append(chunk)
+            replicas = chunks_replicas[chunk]
+            hashes = sorted((get_hash(f"{chunk}:{worker}"), worker) for worker in workers)
+            for _, chosen_worker in hashes[:replicas]:
+                assigned_chunks[chosen_worker].append(chunk)
     
     elif strategy == "circle":
         # https://en.wikipedia.org/wiki/Consistent_hashing
@@ -56,9 +90,13 @@ def assign(
             h = get_hash(chunk)
             hashes.append(h)
             if h > worker_pos[-1][0]:
-                chosen_worker = worker_pos[0][1]
+                worker_index = 0
             else:
-                chosen_worker = worker_pos[bisect_left(worker_pos, (h, 0))][1]
-            assigned_chunks[chosen_worker].append(chunk)
+                worker_index = bisect_left(worker_pos, (h, 0))
+
+            for _ in range(chunks_replicas[chunk]):
+                worker = worker_pos[worker_index][1]
+                assigned_chunks[worker].append(chunk)
+                worker_index = (worker_index + 1) % len(worker_pos)
 
     return Assignment(workers=assigned_chunks)
