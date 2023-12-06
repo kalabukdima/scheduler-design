@@ -61,5 +61,4 @@ def assign(
                 chosen_worker = worker_pos[bisect_left(worker_pos, (h, 0))][1]
             assigned_chunks[chosen_worker].append(chunk)
 
-    logging.debug("Transposing assignment")
     return Assignment(workers=assigned_chunks)
