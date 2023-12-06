@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 import matplotlib.pyplot as plt
 
-from scheduler import assign_plain, WorkerId, ChunkId, Logs
+from scheduler import assign, WorkerId, ChunkId, Logs
 
 DEBUG = True
 
@@ -37,7 +37,8 @@ class Worker:
         self.metrics: Metrics = metrics
         self.chunks: FrozenSet[ChunkId] = set()
     
-    def assign(self, assignment: FrozenSet[ChunkId]) -> None:
+    def assign(self, assignment: List[ChunkId]) -> None:
+        assignment = set(assignment)
         to_fetch = assignment.difference(self.chunks)
         to_drop = self.chunks.difference(assignment)
         self.metrics.report_worker_fetched(self.id, len(to_fetch), len(to_drop))
@@ -76,16 +77,16 @@ def simulate(params: SimulationParams) -> None:
         print("Epoch #", epoch)
 
         logging.debug("Generating assignment")
-        assignment = assign_plain(worker_ids, chunks)
+        assignment = assign(worker_ids, chunks, strategy="rendezvous")
 
         logging.debug("Assigning chunks to workers")
         for id, worker in workers.items():
-            worker.assign(assignment.workers.get(id, set()))
+            worker.assign(assignment.workers.get(id, []))
         
         logging.debug("Simulating client requests")
         for client in clients:
             for chunk in client.generate_query(chunks):
-                worker: WorkerId = random.choice(list(assignment.chunks[chunk]))
+                worker: WorkerId = random.choice(assignment.chunks[chunk])
                 workers[worker].query(chunk)
 
         logging.debug("Reporting summary")
