@@ -62,6 +62,8 @@ class Client:
         self.weights = [1.0]
         pass
 
+    # Other distributions can also be used but it is enough to use any uneven one to see how
+    # it affects reads from workers
     def generate_query(self, chunks: List[ChunkId], num: int = 50) -> List[ChunkId]:
         while len(self.weights) < len(chunks):
             self.weights.append(self.weights[-1] * self.chunk_popularity_factor)
@@ -98,6 +100,9 @@ def simulate(params: SimulationParams) -> None:
             worker.assign(assignment.workers.get(id, []))
         
         logging.debug("Simulating client requests")
+        # Clients' requests are independent, so there is no need
+        # to simulate clients with different number of requests.
+        # We only care about total egress for each worker, not traffic distribution.
         for _ in range(params.clients_num):
             for chunk in client.generate_query(chunks):
                 worker: WorkerId = random.choice(assignment.chunks[chunk])
@@ -106,6 +111,7 @@ def simulate(params: SimulationParams) -> None:
 
         logging.debug("Simulating environment changes")
         chunks.extend(ChunkId(i) for i in range(len(chunks), len(chunks) + params.new_chunks_per_epoch))
+        # TODO: simulate worker replacements
 
         if epoch <= 1:
             metrics.reset()
